@@ -16,19 +16,15 @@ __kernel void galaxyz (
 	int x = i % count;
 	int y = i / count; 
 
-	//if(y < count)
-	//{
-		float theta;
-		float degreefactor = 180.0/pi*binsperdegree;
-		int bin;
-		theta = px[x] * qx[y] + py[x] * qy[y] + pz[x] * qz[y];
-		if (theta >= costotaldegrees) 
-		{
-			if ( theta > 1.0 )
-				theta = 1.0; 
-			bin = (int)(acos(theta) * degreefactor); 
-			atomic_inc(&histogram[bin]); //histogram[bin]++;
-		}
-	//}
-
+	float theta;
+	float degreefactor = 180.0/pi*binsperdegree;
+	int bin;
+	theta = px[x] * qx[y] + py[x] * qy[y] + pz[x] * qz[y];
+	if (theta >= costotaldegrees) 
+	{
+		if ( theta > 1.0 )
+			theta = 1.0; 
+		bin = (int)(acos(theta) * degreefactor); 
+		atomic_inc(&histogram[bin]); //histogram[bin]++;
+	}
 }

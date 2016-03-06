@@ -1,13 +1,6 @@
 /*
-	This is basically "combination" of examples I got at the beginning.
-	It is initial version, so I wouldn't be surprised event if something don't work well.
-
-	Changes made relative to original files
-		- Function for loading kernel source from file
-		- Function for loading input data (removed repetitive code)
-		- Using malloc instead of calloc for x,y,z (no need for initialization)
-		- Removed unnecessary histogram initialization to zero (calloc will do that)
-		- Correction regarding measuring execution time (if I got things right in my head)
+	Compile with gcc -O3 cl_galaxyz.c -o cl_galaxyz -lm -lOpenCL
+	Run sequentially with srun -n 1 galaxyz small.txt small_rand.txt outfile.txt
 */
 
 #include <stdio.h>
@@ -20,23 +13,23 @@
 
 #include "CLErrorToStr.h"
 
-const unsigned int binsperdegree = 4;		/* Nr of bins per degree */
-#define totaldegrees 64							/* Nr of degrees */
+const unsigned int binsperdegree = 4;	/* Nr of bins per degree */
+#define totaldegrees 64					/* Nr of degrees */
 #define KERNEL_FILE_NAME "kernel.cl"
 
 /* Count how many lines the input file has */
 int count_lines (FILE *infile) {
-	char readline[80];      /* Buffer for file input */
+	char readline[80];	/* Buffer for file input */
 	int lines=0;
 	while( fgets(readline,80,infile) != NULL ) lines++;
-		rewind(infile);  /* Reset the file to the beginning */
+		rewind(infile);	/* Reset the file to the beginning */
 	return(lines);
 }
 
 /* Read input data from the file, convert to cartesian coordinates 
 and write them to arrays x, y and z */
 void read_data(FILE *infile, int n, float *x, float *y, float *z) {
-	char readline[80];      /* Buffer for file input */
+	char readline[80];	/* Buffer for file input */
 	float ra, dec, theta, phi, dpi;
 	int i=0;
 	dpi = acos(-1.0);
@@ -75,7 +68,7 @@ int load_kernel_from_file(const char fileName[], char** source_str, size_t *sour
 	fseek(fp, 0L, SEEK_SET);
 
 	*source_str = (char *)malloc(*source_size * sizeof(char));
-	fread(*source_str, 1, *source_size, fp);
+	*source_size = fread(*source_str, 1, *source_size, fp);
 	fclose(fp);
 }
 
@@ -425,8 +418,8 @@ int main(int argc, char *argv[])
 	free(histogramDR);
 	free(histogramRR);
 
-	printf("\nCPU time = %6.2f seconds\n", ((double) (clock()-starttime))/ CLOCKS_PER_SEC);
-	printf("\nWall clock time = %6.2f\n", (double)(time(NULL) - wc_starttime));
+	printf("CPU time = %6.2f seconds\n", ((double) (clock()-starttime))/ CLOCKS_PER_SEC);
+	printf("Wall clock time = %6.2f\n", (double)(time(NULL) - wc_starttime));
 
 	return 0;
 }
