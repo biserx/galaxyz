@@ -84,13 +84,14 @@ int main(int argc, char *argv[])
   double NSimdivNReal, w;
   FILE *infile,*outfile;  /* Input and output files */
   time_t starttime, stoptime;
-  
+  time_t wc_starttime; 
   /* Check that we have 4 command line arguments */
   if ( argc != 4 ) {
     printf("Usage: %s real_data sim_data output_file\n", argv[0]);
     return(0);
   }
-  
+
+  wc_starttime = time(NULL);
   starttime = clock();  // Start measuring time (use MPI_Wtime in the parallel program)
   pi = acosf(-1.0);
   costotaldegrees = (float)(cos(totaldegrees/180.0*pi));
@@ -223,15 +224,15 @@ int main(int argc, char *argv[])
     return(-1);
   }
   /* Write the histograms both to display and outfile */
-  printf("bin center\tomega\t        hist_DD\t        hist_DR\t        hist_RR\n");
+  //printf("bin center\tomega\t        hist_DD\t        hist_DR\t        hist_RR\n");
   fprintf(outfile,"bin center\tomega\t        hist_DD\t        hist_DR\t        hist_RR\n");
   for ( i = 0; i < nr_of_bins; ++i ) 
     {
       NSimdivNReal = ((double)(Nooflines_Sim))/((double)(Nooflines_Real));
       w = 1.0 + NSimdivNReal*NSimdivNReal*histogramDD[i]/histogramRR[i] 
 	-2.0*NSimdivNReal*histogramDR[i]/((double)(histogramRR[i]));
-      printf(" %6.3f      %3.6f\t%15ld\t%15ld\t%15ld\n",((float)i+0.5)/binsperdegree, w, 
-	     histogramDD[i], histogramDR[i], histogramRR[i]);
+      //printf(" %6.3f      %3.6f\t%15ld\t%15ld\t%15ld\n",((float)i+0.5)/binsperdegree, w, 
+	    // histogramDD[i], histogramDR[i], histogramRR[i]);
       fprintf(outfile,"%6.3f\t%15lf\t%15ld\t%15ld\t%15ld\n",((float)i+0.5)/binsperdegree, w, 
 	      histogramDD[i], histogramDR[i], histogramRR[i]);
     }
@@ -245,9 +246,8 @@ int main(int argc, char *argv[])
   free(xd_sim);  free(yd_sim);  free(zd_sim);
   free(xd_real); free(yd_real); free(zd_real);
   
-  stoptime = clock();  /* Stop the timer and print time */
-  printf("\nWall clock time = %6.1f seconds\n", 
-	 ((double) (stoptime-starttime))/ CLOCKS_PER_SEC);
+  printf("CPU time = %6.2f seconds\n", ((double) (clock()-starttime))/ CLOCKS_PER_SEC);
+  printf("Wall clock time = %6.2f\n", (double)(time(NULL) - wc_starttime));
 
   return(0);
 }
