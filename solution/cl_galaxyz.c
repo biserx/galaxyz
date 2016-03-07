@@ -18,7 +18,8 @@ const unsigned int binsperdegree = 4;	/* Nr of bins per degree */
 #define KERNEL_FILE_NAME "kernel.cl"
 
 /* Count how many lines the input file has */
-int count_lines (FILE *infile) {
+int count_lines (FILE *infile) 
+{
 	char readline[80];	/* Buffer for file input */
 	int lines=0;
 	while( fgets(readline,80,infile) != NULL ) lines++;
@@ -28,7 +29,8 @@ int count_lines (FILE *infile) {
 
 /* Read input data from the file, convert to cartesian coordinates 
 and write them to arrays x, y and z */
-void read_data(FILE *infile, int n, float *x, float *y, float *z) {
+void read_data(FILE *infile, int n, float *x, float *y, float *z) 
+{
 	char readline[80];	/* Buffer for file input */
 	float ra, dec, theta, phi, dpi;
 	int i=0;
@@ -55,7 +57,6 @@ void read_data(FILE *infile, int n, float *x, float *y, float *z) {
 	/* printf("      last item: %3.6f %3.6f\n\n",ra,dec); */
 }
 
-
 int load_kernel_from_file(const char fileName[], char** source_str, size_t *source_size)
 {	
 	FILE *fp;
@@ -75,11 +76,11 @@ int load_kernel_from_file(const char fileName[], char** source_str, size_t *sour
 
 int load_input_data(const char fileName[], int *number_of_lines, float **x, float **y, float **z)
 {
-
 	FILE *fp;
 	/* Open the real data input file */
 	fp = fopen(fileName, "r");
-	if (!fp) {
+	if (!fp) 
+	{
 		printf("Unable to open %s\n", fileName);
 		return -1;
 	}
@@ -103,7 +104,8 @@ int load_input_data(const char fileName[], int *number_of_lines, float **x, floa
 int main(int argc, char *argv[])
 {
 	/* Check that we have 4 command line arguments */
-	if ( argc != 4 ) {
+	if ( argc != 4 ) 
+	{
 		printf("Usage: %s real_data sim_data output_file\n", argv[0]);
 		return(0);
 	}
@@ -154,21 +156,21 @@ int main(int argc, char *argv[])
 	// Get available platforms (this example uses the first available platform.
 	// It may be a problem if the first platform does not include device we are looking for)
 	err = clGetPlatformIDs(1, &platform, &no_plat);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Obtain the list of GPU devices available on the platform
 	err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &device_id, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Create OpenCL context for the GPU device
 	context = clCreateContext(0, 1, &device_id, NULL, NULL, &err);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	if (!context) return -1;
 
 	// This command is deprecated in OpenCL 2.0. 
 	// clCreateCommandQueue() should be replaced with clCreateCommandQueueProperties(), and without declaring CL_USE_DEPRECATED_OPENCL_2_0_APIS a warning is raised
 	commands = clCreateCommandQueueWithProperties(context, device_id, 0, &err);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	if (!commands) return -1;
 	
 	// Load kernel source from file
@@ -181,7 +183,7 @@ int main(int argc, char *argv[])
 	// Create program object for the context that stores the source code specified by the kernel_source text string
 	program = clCreateProgramWithSource(context, 1, (const char **) &kernel_source, &kernel_source_size, &err);
 	free(kernel_source);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	if (!program) return -1;
 	
 	// Compile and link the kernel program
@@ -195,11 +197,11 @@ int main(int argc, char *argv[])
 		printf("Build log:\n%s\n", log);
 		free(log);
 	}
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Create the OpenCL kernel  
 	kernel = clCreateKernel(program, "galaxyz", &err);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }	
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }	
 	if (!kernel) return -1;
 	
 	cl_mem cl_xd_real, cl_yd_real, cl_zd_real;
@@ -228,12 +230,12 @@ int main(int argc, char *argv[])
 		return -1;
 	} 
 	
-	int count;
+	size_t count;
 	size_t local;
 	size_t global;
-
+	
 	// ===================================================
-	// 				Calculating DD
+	// 			Calculating DD, DR, RR at once
 	// ===================================================
 
 	count = number_of_lines_real;
@@ -249,20 +251,20 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel, 8, sizeof(float), &pi);
 	err |= clSetKernelArg(kernel, 9, sizeof(float), &costotaldegrees);
 	err |= clSetKernelArg(kernel, 10, sizeof(unsigned int), &count);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
-	
-	local = 10;
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
+
+	local = 1;
 	global = count * count; // count;
 	// Execute the OpenCL kernel in data parallel
 	err = clEnqueueNDRangeKernel(commands, kernel, 1, NULL, &global, &local, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Wait for the commands to get executed before reading back the results 
 	clFinish(commands);
 
 	// Read kernel results to the host memory buffer
 	err = clEnqueueReadBuffer(commands, cl_histogram_DD, CL_TRUE, 0, sizeof(unsigned int) * (nr_of_bins + 1), histogramDD, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// ===================================================
 	// 				Calculating DR
@@ -281,20 +283,20 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel, 8, sizeof(float), &pi);
 	err |= clSetKernelArg(kernel, 9, sizeof(float), &costotaldegrees);
 	err |= clSetKernelArg(kernel, 10, sizeof(unsigned int), &count);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
-	local = 10;
+	local = 1;
 	global = count * count; // count;
 	// Execute the OpenCL kernel in data parallel
 	err = clEnqueueNDRangeKernel(commands, kernel, 1, NULL, &global, &local, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Wait for the commands to get executed before reading back the results 
 	clFinish(commands);
 
 	// Read kernel results to the host memory buffer
 	err = clEnqueueReadBuffer(commands, cl_histogram_DR, CL_TRUE, 0, sizeof(unsigned int) * (nr_of_bins + 1), histogramDR, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// ===================================================
 	// 				Calculating RR
@@ -313,20 +315,20 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel, 8, sizeof(float), &pi);
 	err |= clSetKernelArg(kernel, 9, sizeof(float), &costotaldegrees);
 	err |= clSetKernelArg(kernel, 10, sizeof(unsigned int), &count);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
-	local = 10;
+	local = 1;
 	global = count * count; // count;
 	// Execute the OpenCL kernel in data parallel
 	err = clEnqueueNDRangeKernel(commands, kernel, 1, NULL, &global, &local, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Wait for the commands to get executed before reading back the results 
 	clFinish(commands);
 
 	// Read kernel results to the host memory buffer
 	err = clEnqueueReadBuffer(commands, cl_histogram_RR, CL_TRUE, 0, sizeof(unsigned int) * (nr_of_bins + 1), histogramRR, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error no: %d say: %s\n", err, getErrorString(err)); return -1; }
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// ===================================================
 	// 				End Calculations
@@ -397,7 +399,8 @@ int main(int argc, char *argv[])
 	FILE *outfile;
 	/* Open the output file */
 	outfile = fopen(argv[3],"w");
-	if ( outfile == NULL ) {
+	if ( outfile == NULL ) 
+	{
 		printf("Unable to open %s\n",argv[3]);
 		return -1;
 	}
