@@ -13,9 +13,40 @@
 
 #include "CLErrorToStr.h"
 
-const unsigned int binsperdegree = 4;	/* Nr of bins per degree */
-#define totaldegrees 64					/* Nr of degrees */
 #define KERNEL_FILE_NAME "kernel.cl"
+
+void make_factors(size_t in, size_t *a, size_t *b)
+{
+	int x = 2;
+	*a = 1;
+	*b = 1;
+	while(1)
+	{
+		while(in % x == 0)
+		{
+			if (x > *a * *b) { *a = *a * *b; *b = 1; }
+			if (*a > *b) *b *= x; else *a *= x;
+			in /= x;
+		}
+		++x;
+		if (x > in) break;
+	}
+}
+
+void get_global_sizes(size_t local, size_t global[], unsigned int matrix_size)
+{
+	size_t a, b;
+	size_t tmp = matrix_size / local + (matrix_size % local > 0);
+	tmp = tmp * (tmp + 1) / 2;
+	make_factors(tmp, &a, &b);
+	global[0] = a * local;
+	global[1] = b * local;
+}
+
+long max(long a, long b)
+{
+	return a>b?a:b;
+}
 
 /* Count how many lines the input file has */
 int count_lines (FILE *infile) 
@@ -74,7 +105,7 @@ int load_kernel_from_file(const char fileName[], char** source_str, size_t *sour
 }
 
 
-int load_input_data(const char fileName[], int *number_of_lines, float **x, float **y, float **z)
+int load_input_data(const char fileName[], long *number_of_lines, float **x, float **y, float **z)
 {
 	FILE *fp;
 	/* Open the real data input file */
@@ -87,7 +118,7 @@ int load_input_data(const char fileName[], int *number_of_lines, float **x, floa
 
 	/* Count how many lines the input file has */
 	*number_of_lines = count_lines(fp);
-	printf("%s contains %d lines\n", fileName, *number_of_lines);
+	printf("%s contains %lu lines\n", fileName, *number_of_lines);
 
 	/* Allocate arrays for x, y and z values */
 	*x = (float *)malloc(*number_of_lines * sizeof(float));
@@ -109,14 +140,19 @@ int main(int argc, char *argv[])
 		printf("Usage: %s real_data sim_data output_file\n", argv[0]);
 		return(0);
 	}
-	
+
+	unsigned int default_work_group_size = 10;
+	unsigned int binsperdegree = 4;	/* Nr of bins per degree */
+	unsigned int totaldegrees = 64;	/* Nr of degrees */
+	unsigned int nr_of_bins = binsperdegree * totaldegrees + 1;  /* Total number of bins */
+
 	time_t wc_starttime;
 	time_t starttime, stoptime;
 	wc_starttime = time(NULL);
 	starttime = clock();  // Start measuring time (use MPI_Wtime in the parallel program)
 
-	unsigned int number_of_lines_real;	/* Nr of lines in real data */
-	unsigned int number_of_lines_sim;	/* Nr of lines in random data */
+	unsigned long number_of_lines_real;	/* Nr of lines in real data */
+	unsigned long number_of_lines_sim;	/* Nr of lines in random data */
 	float *xd_real, *yd_real, *zd_real;	/* Arrays for real data */
 	float *xd_sim , *yd_sim , *zd_sim;	/* Arrays for random data */
 
@@ -129,13 +165,12 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	int nr_of_bins = binsperdegree * totaldegrees;  /* Total number of bins */
 	unsigned int *histogramDD, *histogramDR, *histogramRR; /* Arrays for histograms */
 	
 	/* Allocate arrays for the histograms */
-	histogramDD = (unsigned int *)calloc(nr_of_bins+1, sizeof(unsigned int));
-	histogramDR = (unsigned int *)calloc(nr_of_bins+1, sizeof(unsigned int));
-	histogramRR = (unsigned int *)calloc(nr_of_bins+1, sizeof(unsigned int));
+	histogramDD = (unsigned int *)calloc(nr_of_bins, sizeof(unsigned int));
+	histogramDR = (unsigned int *)calloc(nr_of_bins, sizeof(unsigned int));
+	histogramRR = (unsigned int *)calloc(nr_of_bins, sizeof(unsigned int));
 
 	float pi, costotaldegrees;
 	pi = acosf(-1.0);
@@ -148,7 +183,7 @@ int main(int argc, char *argv[])
 	cl_context context; // compute context
 	cl_command_queue commands; // compute command queue
 	cl_program program; // compute program
-	cl_kernel kernel_single, kernel_multi; // compute kernel
+	cl_kernel kernel_1, kernel_2; // compute kernel
 
 	cl_platform_id platform;
 	unsigned int no_plat;
@@ -200,13 +235,10 @@ int main(int argc, char *argv[])
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Create the OpenCL kernel  
-	kernel_single = clCreateKernel(program, "galaxyz_single", &err);
+	kernel_1 = clCreateKernel(program, "galaxyz_1", &err);
+	kernel_2 = clCreateKernel(program, "galaxyz_2", &err);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }	
-	if (!kernel_single) return -1;
-
-	kernel_multi = clCreateKernel(program, "galaxyz_multi", &err);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }	
-	if (!kernel_multi) return -1;
+	if (!kernel_1 || !kernel_2) return -1;
 	
 	cl_mem cl_xd_real, cl_yd_real, cl_zd_real;
 	cl_mem cl_xd_sim, cl_yd_sim, cl_zd_sim;
@@ -222,9 +254,9 @@ int main(int argc, char *argv[])
 	cl_zd_sim  = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, sizeof(float) * number_of_lines_sim, zd_sim, NULL);
 
 	// Create device memory buffer for the output data
-	cl_histogram_DD = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(unsigned int) * (nr_of_bins+1), histogramDD, NULL);
-	cl_histogram_DR = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(unsigned int) * (nr_of_bins+1), histogramDR, NULL);
-	cl_histogram_RR = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(unsigned int) * (nr_of_bins+1), histogramRR, NULL);
+	cl_histogram_DD = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(unsigned int) * nr_of_bins, histogramDD, NULL);
+	cl_histogram_DR = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(unsigned int) * nr_of_bins, histogramDR, NULL);
+	cl_histogram_RR = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, sizeof(unsigned int) * nr_of_bins, histogramRR, NULL);
 
 	if (!cl_xd_real || !cl_yd_real || !cl_zd_real ||
 		 !cl_xd_sim || !cl_yd_sim || !cl_zd_sim ||
@@ -234,93 +266,105 @@ int main(int argc, char *argv[])
 		return -1;
 	} 
 	
-	size_t count;
-	size_t local;
-	size_t global;
-	
-	float degreefactor = 180.0/pi*binsperdegree;
-	
-	local = 16;
+	// Calculating wrok-groups sizes and total work-items count
+	size_t local_DD[2];
+	size_t local_DR[2];
+	size_t local_RR[2];
+	size_t global_DD[2];
+	size_t global_DR[2];
+	size_t global_RR[2];
+
+	local_DD[0] = default_work_group_size;
+	local_DD[1] = local_DD[0];
+	get_global_sizes(local_DD[0], global_DD, number_of_lines_real);
+
+	printf("DD:\n Total work-groups: %zu\n Work-group size: %zux%zu\n Total work-items: %zu\n", 
+			global_DD[0] * global_DD[1] / local_DD[0] / local_DD[1],
+			local_DD[0], local_DD[1],
+			global_DD[0] * global_DD[1]);
+
+	local_DR[0] = default_work_group_size;
+	local_DR[1] = default_work_group_size;
+	global_DR[0] = number_of_lines_real;
+	global_DR[1] = number_of_lines_sim;
+	printf("DR:\n Total work-groups: %zu\n Work-group size: %zux%zu\n Total work-items: %zu\n", 
+			global_DR[0] * global_DR[1] / local_DR[0] / local_DR[1],
+			local_DR[0], local_DR[1],
+			global_DR[0] * global_DR[1]);
+
+	local_RR[0] = default_work_group_size;
+	local_RR[1] = local_RR[0];
+	get_global_sizes(local_RR[0], global_RR, number_of_lines_sim);
+	printf("RR:\n Total work-groups: %zu\n Work-group size: %zux%zu\n Total work-items: %zu\n", 
+			global_RR[0] * global_RR[1] / local_RR[0] / local_RR[1],
+			local_RR[0], local_RR[1],
+			global_RR[0] * global_RR[1]);
+
+	float degreefactor = 180.0 / pi * binsperdegree;
 
 	// ===================================================
-	// 				Calculating DD
+	// 			Calculating DD, DR, RR
 	// ===================================================
 
-	// Set the kernel arguments
-	err = clSetKernelArg(kernel_single, 0, sizeof(cl_mem), &cl_xd_real);
-	err |= clSetKernelArg(kernel_single, 1, sizeof(cl_mem), &cl_yd_real);
-	err |= clSetKernelArg(kernel_single, 2, sizeof(cl_mem), &cl_zd_real);
-	err |= clSetKernelArg(kernel_single, 3, sizeof(cl_mem), &cl_histogram_DD);
-	err |= clSetKernelArg(kernel_single, 4, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel_single, 5, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel_single, 6, sizeof(unsigned int), &number_of_lines_real);
+	// Set the kernel arguments DD
+	err  = clSetKernelArg(kernel_1, 0, sizeof(cl_mem), &cl_xd_real);
+	err |= clSetKernelArg(kernel_1, 1, sizeof(cl_mem), &cl_yd_real);
+	err |= clSetKernelArg(kernel_1, 2, sizeof(cl_mem), &cl_zd_real);
+	err |= clSetKernelArg(kernel_1, 3, sizeof(cl_mem), &cl_histogram_DD); // Histogram global
+	err |= clSetKernelArg(kernel_1, 4, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
+	err |= clSetKernelArg(kernel_1, 5, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
+	err |= clSetKernelArg(kernel_1, 6, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel_1, 7, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel_1, 8, sizeof(unsigned long), &number_of_lines_real);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
-	global = number_of_lines_real * (number_of_lines_real + 1) / 2;
 	// Execute the OpenCL kernel in data parallel
-	err = clEnqueueNDRangeKernel(commands, kernel_single, 1, NULL, &global, &local, 0, NULL, NULL);
+	err = clEnqueueNDRangeKernel(commands, kernel_1, 2, NULL, global_DD, local_DD, 0, NULL, NULL);
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
+
+	// Set the kernel arguments RR
+	err  = clSetKernelArg(kernel_1, 0, sizeof(cl_mem), &cl_xd_sim);
+	err |= clSetKernelArg(kernel_1, 1, sizeof(cl_mem), &cl_yd_sim);
+	err |= clSetKernelArg(kernel_1, 2, sizeof(cl_mem), &cl_zd_sim);
+	err |= clSetKernelArg(kernel_1, 3, sizeof(cl_mem), &cl_histogram_RR); // Histogram global
+	err |= clSetKernelArg(kernel_1, 4, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
+	err |= clSetKernelArg(kernel_1, 5, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
+	err |= clSetKernelArg(kernel_1, 6, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel_1, 7, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel_1, 8, sizeof(unsigned long), &number_of_lines_sim);
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
+
+	// Execute the OpenCL kernel in data parallel
+	err = clEnqueueNDRangeKernel(commands, kernel_1, 2, NULL, global_RR, local_RR, 0, NULL, NULL);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
+	// Set the kernel arguments DR
+	err  = clSetKernelArg(kernel_2, 0, sizeof(cl_mem), &cl_xd_real);
+	err |= clSetKernelArg(kernel_2, 1, sizeof(cl_mem), &cl_yd_real);
+	err |= clSetKernelArg(kernel_2, 2, sizeof(cl_mem), &cl_zd_real);
+	err |= clSetKernelArg(kernel_2, 3, sizeof(cl_mem), &cl_xd_sim);
+	err |= clSetKernelArg(kernel_2, 4, sizeof(cl_mem), &cl_yd_sim);
+	err |= clSetKernelArg(kernel_2, 5, sizeof(cl_mem), &cl_zd_sim);
+	err |= clSetKernelArg(kernel_2, 6, sizeof(cl_mem), &cl_histogram_DR); // Histogram global
+	err |= clSetKernelArg(kernel_2, 7, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
+	err |= clSetKernelArg(kernel_2, 8, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
+	err |= clSetKernelArg(kernel_2, 9, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel_2, 10, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel_2, 11, sizeof(unsigned long), &number_of_lines_real);
+	err |= clSetKernelArg(kernel_2, 12, sizeof(unsigned long), &number_of_lines_sim);
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
+
+	// Execute the OpenCL kernel in data parallel
+	err = clEnqueueNDRangeKernel(commands, kernel_2, 2, NULL, global_DR, local_DR, 0, NULL, NULL);
+	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
+
 	// Wait for the commands to get executed before reading back the results 
 	clFinish(commands);
 
 	// Read kernel results to the host memory buffer
-	err = clEnqueueReadBuffer(commands, cl_histogram_DD, CL_TRUE, 0, sizeof(unsigned int) * (nr_of_bins + 1), histogramDD, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
-
-	// ===================================================
-	// 				Calculating RR
-	// ===================================================
-
-	// Set the kernel arguments
-	err = clSetKernelArg(kernel_single, 0, sizeof(cl_mem), &cl_xd_sim);
-	err |= clSetKernelArg(kernel_single, 1, sizeof(cl_mem), &cl_yd_sim);
-	err |= clSetKernelArg(kernel_single, 2, sizeof(cl_mem), &cl_zd_sim);
-	err |= clSetKernelArg(kernel_single, 3, sizeof(cl_mem), &cl_histogram_RR);
-	err |= clSetKernelArg(kernel_single, 4, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel_single, 5, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel_single, 6, sizeof(unsigned int), &number_of_lines_sim);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
-
-	global = number_of_lines_sim * (number_of_lines_sim + 1) / 2;
-	// Execute the OpenCL kernel in data parallel
-	err = clEnqueueNDRangeKernel(commands, kernel_single, 1, NULL, &global, &local, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
-	
-	// Wait for the commands to get executed before reading back the results 
-	clFinish(commands);
-
-	// Read kernel results to the host memory buffer
-	err = clEnqueueReadBuffer(commands, cl_histogram_RR, CL_TRUE, 0, sizeof(unsigned int) * (nr_of_bins + 1), histogramRR, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
-
-	// ===================================================
-	// 				Calculating DR
-	// ===================================================
-
-	// Set the kernel arguments
-	err = clSetKernelArg(kernel_multi, 0, sizeof(cl_mem), &cl_xd_real);
-	err |= clSetKernelArg(kernel_multi, 1, sizeof(cl_mem), &cl_yd_real);
-	err |= clSetKernelArg(kernel_multi, 2, sizeof(cl_mem), &cl_zd_real);
-	err |= clSetKernelArg(kernel_multi, 3, sizeof(cl_mem), &cl_xd_sim);
-	err |= clSetKernelArg(kernel_multi, 4, sizeof(cl_mem), &cl_yd_sim);
-	err |= clSetKernelArg(kernel_multi, 5, sizeof(cl_mem), &cl_zd_sim);
-	err |= clSetKernelArg(kernel_multi, 6, sizeof(cl_mem), &cl_histogram_DR);
-	err |= clSetKernelArg(kernel_multi, 7, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel_multi, 8, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel_multi, 9, sizeof(unsigned int), &number_of_lines_real);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
-	
-	global = number_of_lines_real * number_of_lines_sim; // count;
-	// Execute the OpenCL kernel in data parallel
-	err = clEnqueueNDRangeKernel(commands, kernel_multi, 1, NULL, &global, &local, 0, NULL, NULL);
-	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
-	
-	// Wait for the commands to get executed before reading back the results 
-	clFinish(commands);
-
-	// Read kernel results to the host memory buffer
-	err = clEnqueueReadBuffer(commands, cl_histogram_DR, CL_TRUE, 0, sizeof(unsigned int) * (nr_of_bins + 1), histogramDR, 0, NULL, NULL);
+	err  = clEnqueueReadBuffer(commands, cl_histogram_DD, CL_TRUE, 0, sizeof(unsigned int) * nr_of_bins, histogramDD, 0, NULL, NULL);
+	err |= clEnqueueReadBuffer(commands, cl_histogram_DR, CL_TRUE, 0, sizeof(unsigned int) * nr_of_bins, histogramDR, 0, NULL, NULL);
+	err |= clEnqueueReadBuffer(commands, cl_histogram_RR, CL_TRUE, 0, sizeof(unsigned int) * nr_of_bins, histogramRR, 0, NULL, NULL);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// ===================================================
@@ -339,8 +383,8 @@ int main(int argc, char *argv[])
 	clReleaseMemObject(cl_histogram_RR);
 
 	clReleaseProgram(program);
-	clReleaseKernel(kernel_single);
-	clReleaseKernel(kernel_multi);
+	clReleaseKernel(kernel_1);
+	clReleaseKernel(kernel_2);
 	clReleaseCommandQueue(commands);
 	clReleaseContext(context);
 
@@ -353,33 +397,33 @@ int main(int argc, char *argv[])
 	
 	printf("Calculating DD angle histogram...\n");
 	/* Multiply DD histogram with 2 since we only calculate (i,j) pair, not (j,i) */
-	for ( i = 0; i <= nr_of_bins; ++i ) 
+	for ( i = 0; i < nr_of_bins; ++i ) 
 		histogramDD[i] *= 2L;
-	//histogramDD[0] += ((long)(number_of_lines_real));
+	/*histogramDD[0] += ((long)(number_of_lines_real));*/
 		
 	/* Count the total nr of values in the DD histograms */
 	TotalCountDD = 0L;
-	for ( i = 0; i <= nr_of_bins; ++i ) 
+	for ( i = 0; i < nr_of_bins; ++i ) 
 		TotalCountDD += histogramDD[i]; 
-	printf("  histogram count = %ld\n\n", TotalCountDD);
+	printf("\thistogram count = %ld\n", TotalCountDD);
 	
 	printf("Calculating DR angle histogram...\n");
 	/* Count the total nr of values in the DR histograms */
 	TotalCountDR = 0L;
-	for ( i = 0; i <= nr_of_bins; ++i ) 
+	for ( i = 0; i < nr_of_bins; ++i ) 
 		TotalCountDR += histogramDR[i]; 
-	printf("DR angle                         histogram count = %ld\n\n", TotalCountDR);
+	printf("\thistogram count = %ld\n", TotalCountDR);
 
 	/* Multiply RR histogram with 2 since we only calculate (i,j) pair, not (j,i) */
-	for ( i = 0; i <= nr_of_bins; ++i ) 
+	for ( i = 0; i < nr_of_bins; ++i ) 
 		histogramRR[i] *= 2L; 
-	//histogramRR[0] += ((long)(number_of_lines_sim));
+	/*histogramRR[0] += ((long)(number_of_lines_sim));*/
 	printf("Calculating RR angle histogram...\n");
 	/* Count the total nr of values in the RR histograms */
 	TotalCountRR = 0L;
-	for ( i = 0; i <= nr_of_bins; ++i ) 
+	for ( i = 0; i < nr_of_bins; ++i ) 
 		TotalCountRR += histogramRR[i]; 
-	printf("  histogram count = %ld\n\n", TotalCountRR);
+	printf("\thistogram count = %ld\n", TotalCountRR);
 
 	free(xd_real);
 	free(yd_real);
@@ -402,7 +446,7 @@ int main(int argc, char *argv[])
 	//printf("bin center\tomega\t        hist_DD\t        hist_DR\t        hist_RR\n");
 	fprintf(outfile,"bin center\tomega\t        hist_DD\t        hist_DR\t        hist_RR\n");
 	double NSimdivNReal, w;
-	for ( i = 0; i < nr_of_bins; ++i ) 
+	for ( i = 0; i < nr_of_bins - 1; ++i ) 
 	{
 		NSimdivNReal = ((double)(number_of_lines_sim))/((double)(number_of_lines_real));
 		w = 1.0 + NSimdivNReal*NSimdivNReal*histogramDD[i]/histogramRR[i]-2.0*NSimdivNReal*histogramDR[i]/((double)(histogramRR[i]));
