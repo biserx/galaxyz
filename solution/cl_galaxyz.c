@@ -238,7 +238,7 @@ int main(int argc, char *argv[])
 	size_t local[2];
 	size_t global[2];
 	
-	float degreefactor = 180.0/pi*binsperdegree;
+	float degreefactor = 180.0 / pi * binsperdegree;
 
 	// ===================================================
 	// 			Calculating DD, DR, RR at once
@@ -254,16 +254,15 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel, 6, sizeof(cl_mem), &cl_histogram_DD);
 	err |= clSetKernelArg(kernel, 7, sizeof(cl_mem), &cl_histogram_DR);
 	err |= clSetKernelArg(kernel, 8, sizeof(cl_mem), &cl_histogram_RR);
-	err |= clSetKernelArg(kernel, 9, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel, 10, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel, 11, sizeof(unsigned long), &number_of_lines_real);
-	err |= clSetKernelArg(kernel, 12, sizeof(unsigned long), &number_of_lines_sim);
+	err |= clSetKernelArg(kernel, 9, sizeof(unsigned int) * (nr_of_bins+1), NULL);
+	err |= clSetKernelArg(kernel, 10, sizeof(unsigned int) * (nr_of_bins+1), NULL);
+	err |= clSetKernelArg(kernel, 11, sizeof(unsigned int) * (nr_of_bins+1), NULL);
+	err |= clSetKernelArg(kernel, 12, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel, 13, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel, 14, sizeof(unsigned long), &number_of_lines_real);
+	err |= clSetKernelArg(kernel, 15, sizeof(unsigned long), &number_of_lines_sim);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
-	// local CPU OpenCL 32 small : 64.32 / 8
-	// asterope GPU OpenCL 32 small : 0.83 / 1
-	// asterope GPU OpenCL 32 medium : 56.45 / 57
-	
 	local[0] = 32;
 	local[1] = 32;
 	global[0] = max(number_of_lines_real, number_of_lines_sim);
