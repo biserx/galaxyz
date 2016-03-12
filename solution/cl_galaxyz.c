@@ -33,8 +33,9 @@ void make_factors(size_t in, size_t *a, size_t *b)
 	}
 }
 
-void get_global_sizes(size_t local, size_t global[], unsigned int matrix_size)
+void get_global_sizes(size_t local, size_t global[], unsigned int matrix_size, unsigned int work_item_coverage)
 {
+	matrix_size = matrix_size / work_item_coverage + (matrix_size % work_item_coverage > 0);
 	size_t a, b;
 	size_t tmp = matrix_size / local + (matrix_size % local > 0);
 	tmp = tmp * (tmp + 1) / 2;
@@ -141,7 +142,8 @@ int main(int argc, char *argv[])
 		return(0);
 	}
 
-	unsigned int default_work_group_size = 10;
+	unsigned int work_group_size = 10;
+	unsigned int work_item_coverage = 100;
 	unsigned int binsperdegree = 4;	/* Nr of bins per degree */
 	unsigned int totaldegrees = 64;	/* Nr of degrees */
 	unsigned int nr_of_bins = binsperdegree * totaldegrees + 1;  /* Total number of bins */
@@ -274,38 +276,37 @@ int main(int argc, char *argv[])
 	size_t global_DR[2];
 	size_t global_RR[2];
 
-	local_DD[0] = default_work_group_size;
+	local_DD[0] = work_group_size;
 	local_DD[1] = local_DD[0];
-	get_global_sizes(local_DD[0], global_DD, number_of_lines_real);
-
+	get_global_sizes(local_DD[0], global_DD, number_of_lines_real, work_item_coverage);
 	printf("DD:\n Total work-groups: %zu\n Work-group size: %zux%zu\n Total work-items: %zu\n", 
 			global_DD[0] * global_DD[1] / local_DD[0] / local_DD[1],
 			local_DD[0], local_DD[1],
 			global_DD[0] * global_DD[1]);
 
-	local_DR[0] = default_work_group_size;
-	local_DR[1] = default_work_group_size;
-	global_DR[0] = number_of_lines_real;
-	global_DR[1] = number_of_lines_sim;
+	local_DR[0] = work_group_size;
+	local_DR[1] = work_group_size;
+	global_DR[0] = number_of_lines_real / work_item_coverage;
+	global_DR[1] = number_of_lines_sim / work_item_coverage;
 	printf("DR:\n Total work-groups: %zu\n Work-group size: %zux%zu\n Total work-items: %zu\n", 
 			global_DR[0] * global_DR[1] / local_DR[0] / local_DR[1],
 			local_DR[0], local_DR[1],
 			global_DR[0] * global_DR[1]);
 
-	local_RR[0] = default_work_group_size;
+	local_RR[0] = work_group_size;
 	local_RR[1] = local_RR[0];
-	get_global_sizes(local_RR[0], global_RR, number_of_lines_sim);
+	get_global_sizes(local_RR[0], global_RR, number_of_lines_sim, work_item_coverage);
 	printf("RR:\n Total work-groups: %zu\n Work-group size: %zux%zu\n Total work-items: %zu\n", 
 			global_RR[0] * global_RR[1] / local_RR[0] / local_RR[1],
 			local_RR[0], local_RR[1],
 			global_RR[0] * global_RR[1]);
 
+	printf("Work-item coverage: %dx%d\n", work_item_coverage, work_item_coverage);
 	float degreefactor = 180.0 / pi * binsperdegree;
 
 	// ===================================================
 	// 			Calculating DD, DR, RR
 	// ===================================================
-
 	// Set the kernel arguments DD
 	err  = clSetKernelArg(kernel_1, 0, sizeof(cl_mem), &cl_xd_real);
 	err |= clSetKernelArg(kernel_1, 1, sizeof(cl_mem), &cl_yd_real);
@@ -316,6 +317,7 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel_1, 6, sizeof(float), &degreefactor);
 	err |= clSetKernelArg(kernel_1, 7, sizeof(float), &costotaldegrees);
 	err |= clSetKernelArg(kernel_1, 8, sizeof(unsigned long), &number_of_lines_real);
+	err |= clSetKernelArg(kernel_1, 9, sizeof(unsigned int), &work_item_coverage);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Execute the OpenCL kernel in data parallel
@@ -332,6 +334,7 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel_1, 6, sizeof(float), &degreefactor);
 	err |= clSetKernelArg(kernel_1, 7, sizeof(float), &costotaldegrees);
 	err |= clSetKernelArg(kernel_1, 8, sizeof(unsigned long), &number_of_lines_sim);
+	err |= clSetKernelArg(kernel_1, 9, sizeof(unsigned int), &work_item_coverage);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Execute the OpenCL kernel in data parallel
@@ -352,6 +355,7 @@ int main(int argc, char *argv[])
 	err |= clSetKernelArg(kernel_2, 10, sizeof(float), &costotaldegrees);
 	err |= clSetKernelArg(kernel_2, 11, sizeof(unsigned long), &number_of_lines_real);
 	err |= clSetKernelArg(kernel_2, 12, sizeof(unsigned long), &number_of_lines_sim);
+	err |= clSetKernelArg(kernel_2, 13, sizeof(unsigned int), &work_item_coverage);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Execute the OpenCL kernel in data parallel
