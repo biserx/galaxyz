@@ -142,8 +142,9 @@ int main(int argc, char *argv[])
 		return(0);
 	}
 
-	unsigned int work_group_size = 10;
-	unsigned int work_item_coverage = 100;
+	unsigned int work_group_size = 20;
+	unsigned int work_item_coverage = 50;
+	// Local memory used = work_group_size * work_group_size * work_item_coverage * 4 bytes * 6 arrays + (histogram) < 1024KB
 	unsigned int binsperdegree = 4;	/* Nr of bins per degree */
 	unsigned int totaldegrees = 64;	/* Nr of degrees */
 	unsigned int nr_of_bins = binsperdegree * totaldegrees + 1;  /* Total number of bins */
@@ -196,7 +197,7 @@ int main(int argc, char *argv[])
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Obtain the list of GPU devices available on the platform
-	err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &device_id, NULL);
+	err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Create OpenCL context for the GPU device
@@ -206,7 +207,7 @@ int main(int argc, char *argv[])
 
 	// This command is deprecated in OpenCL 2.0. 
 	// clCreateCommandQueue() should be replaced with clCreateCommandQueueProperties(), and without declaring CL_USE_DEPRECATED_OPENCL_2_0_APIS a warning is raised
-	commands = clCreateCommandQueueWithProperties(context, device_id, 0, &err);
+	commands = clCreateCommandQueue(context, device_id, 0, &err);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	if (!commands) return -1;
 	
@@ -224,7 +225,8 @@ int main(int argc, char *argv[])
 	if (!program) return -1;
 	
 	// Compile and link the kernel program
-	err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+	char *options = "-cl-opt-disable";
+	err = clBuildProgram(program, 0, NULL, options, NULL, NULL);
 	if (err != CL_SUCCESS)
 	{
 		size_t len;
@@ -308,16 +310,22 @@ int main(int argc, char *argv[])
 	// 			Calculating DD, DR, RR
 	// ===================================================
 	// Set the kernel arguments DD
-	err  = clSetKernelArg(kernel_1, 0, sizeof(cl_mem), &cl_xd_real);
-	err |= clSetKernelArg(kernel_1, 1, sizeof(cl_mem), &cl_yd_real);
-	err |= clSetKernelArg(kernel_1, 2, sizeof(cl_mem), &cl_zd_real);
-	err |= clSetKernelArg(kernel_1, 3, sizeof(cl_mem), &cl_histogram_DD); // Histogram global
-	err |= clSetKernelArg(kernel_1, 4, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
-	err |= clSetKernelArg(kernel_1, 5, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
-	err |= clSetKernelArg(kernel_1, 6, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel_1, 7, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel_1, 8, sizeof(unsigned long), &number_of_lines_real);
-	err |= clSetKernelArg(kernel_1, 9, sizeof(unsigned int), &work_item_coverage);
+	err  = clSetKernelArg(kernel_1,  0, sizeof(cl_mem), &cl_xd_real);
+	err |= clSetKernelArg(kernel_1,  1, sizeof(cl_mem), &cl_yd_real);
+	err |= clSetKernelArg(kernel_1,  2, sizeof(cl_mem), &cl_zd_real);
+	err |= clSetKernelArg(kernel_1,  3, sizeof(cl_mem), &cl_histogram_DD); // Histogram global
+	err |= clSetKernelArg(kernel_1,  4, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  5, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  6, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  7, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  8, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  9, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1, 10, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
+	err |= clSetKernelArg(kernel_1, 11, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
+	err |= clSetKernelArg(kernel_1, 12, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel_1, 13, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel_1, 14, sizeof(unsigned long), &number_of_lines_real);
+	err |= clSetKernelArg(kernel_1, 15, sizeof(unsigned int), &work_item_coverage);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Execute the OpenCL kernel in data parallel
@@ -325,16 +333,22 @@ int main(int argc, char *argv[])
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Set the kernel arguments RR
-	err  = clSetKernelArg(kernel_1, 0, sizeof(cl_mem), &cl_xd_sim);
-	err |= clSetKernelArg(kernel_1, 1, sizeof(cl_mem), &cl_yd_sim);
-	err |= clSetKernelArg(kernel_1, 2, sizeof(cl_mem), &cl_zd_sim);
-	err |= clSetKernelArg(kernel_1, 3, sizeof(cl_mem), &cl_histogram_RR); // Histogram global
-	err |= clSetKernelArg(kernel_1, 4, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
-	err |= clSetKernelArg(kernel_1, 5, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
-	err |= clSetKernelArg(kernel_1, 6, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel_1, 7, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel_1, 8, sizeof(unsigned long), &number_of_lines_sim);
-	err |= clSetKernelArg(kernel_1, 9, sizeof(unsigned int), &work_item_coverage);
+	err  = clSetKernelArg(kernel_1,  0, sizeof(cl_mem), &cl_xd_sim);
+	err |= clSetKernelArg(kernel_1,  1, sizeof(cl_mem), &cl_yd_sim);
+	err |= clSetKernelArg(kernel_1,  2, sizeof(cl_mem), &cl_zd_sim);
+	err |= clSetKernelArg(kernel_1,  3, sizeof(cl_mem), &cl_histogram_RR); // Histogram global
+	err |= clSetKernelArg(kernel_1,  4, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  5, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  6, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  7, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  8, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1,  9, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_1, 10, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
+	err |= clSetKernelArg(kernel_1, 11, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
+	err |= clSetKernelArg(kernel_1, 12, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel_1, 13, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel_1, 14, sizeof(unsigned long), &number_of_lines_sim);
+	err |= clSetKernelArg(kernel_1, 15, sizeof(unsigned int), &work_item_coverage);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Execute the OpenCL kernel in data parallel
@@ -342,20 +356,26 @@ int main(int argc, char *argv[])
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 	
 	// Set the kernel arguments DR
-	err  = clSetKernelArg(kernel_2, 0, sizeof(cl_mem), &cl_xd_real);
-	err |= clSetKernelArg(kernel_2, 1, sizeof(cl_mem), &cl_yd_real);
-	err |= clSetKernelArg(kernel_2, 2, sizeof(cl_mem), &cl_zd_real);
-	err |= clSetKernelArg(kernel_2, 3, sizeof(cl_mem), &cl_xd_sim);
-	err |= clSetKernelArg(kernel_2, 4, sizeof(cl_mem), &cl_yd_sim);
-	err |= clSetKernelArg(kernel_2, 5, sizeof(cl_mem), &cl_zd_sim);
-	err |= clSetKernelArg(kernel_2, 6, sizeof(cl_mem), &cl_histogram_DR); // Histogram global
-	err |= clSetKernelArg(kernel_2, 7, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
-	err |= clSetKernelArg(kernel_2, 8, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
-	err |= clSetKernelArg(kernel_2, 9, sizeof(float), &degreefactor);
-	err |= clSetKernelArg(kernel_2, 10, sizeof(float), &costotaldegrees);
-	err |= clSetKernelArg(kernel_2, 11, sizeof(unsigned long), &number_of_lines_real);
-	err |= clSetKernelArg(kernel_2, 12, sizeof(unsigned long), &number_of_lines_sim);
-	err |= clSetKernelArg(kernel_2, 13, sizeof(unsigned int), &work_item_coverage);
+	err  = clSetKernelArg(kernel_2,  0, sizeof(cl_mem), &cl_xd_real);
+	err |= clSetKernelArg(kernel_2,  1, sizeof(cl_mem), &cl_yd_real);
+	err |= clSetKernelArg(kernel_2,  2, sizeof(cl_mem), &cl_zd_real);
+	err |= clSetKernelArg(kernel_2,  3, sizeof(cl_mem), &cl_xd_sim);
+	err |= clSetKernelArg(kernel_2,  4, sizeof(cl_mem), &cl_yd_sim);
+	err |= clSetKernelArg(kernel_2,  5, sizeof(cl_mem), &cl_zd_sim);
+	err |= clSetKernelArg(kernel_2,  6, sizeof(cl_mem), &cl_histogram_DR); // Histogram global
+	err |= clSetKernelArg(kernel_2,  7, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_2,  8, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_2,  9, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_2, 10, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_2, 11, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_2, 12, sizeof(float) * work_item_coverage * work_group_size, NULL);
+	err |= clSetKernelArg(kernel_2, 13, sizeof(unsigned int) * nr_of_bins, NULL); // Histogram local memory
+	err |= clSetKernelArg(kernel_2, 14, sizeof(unsigned int), &nr_of_bins); // Number of bins in histogram
+	err |= clSetKernelArg(kernel_2, 15, sizeof(float), &degreefactor);
+	err |= clSetKernelArg(kernel_2, 16, sizeof(float), &costotaldegrees);
+	err |= clSetKernelArg(kernel_2, 17, sizeof(unsigned long), &number_of_lines_real);
+	err |= clSetKernelArg(kernel_2, 18, sizeof(unsigned long), &number_of_lines_sim);
+	err |= clSetKernelArg(kernel_2, 19, sizeof(unsigned int), &work_item_coverage);
 	if (err != CL_SUCCESS) { printf("Error (%d) no: %d say: %s\n", __LINE__, err, getErrorString(err)); return -1; }
 
 	// Execute the OpenCL kernel in data parallel
